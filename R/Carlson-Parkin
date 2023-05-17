@@ -1,1 +1,72 @@
+cp <- function(y.series, survey.up, survey.same, survey.down, forecast.horizon, first.period = 1, last.period = (length(survey.up) - forecast.horizon), limen.type = "carlson.parkin", const.limen = 0, user.symm.limen = 0, user.upper.limen = 0, user.lower.limen = 0, correct.zero = TRUE, correct.by = 0.01, growth.limit = NA, distrib.type = "normal", distrib.mean = 0, distrib.sd = 1, distrib.log.location = 0, distrib.log.scale = 1, distrib.t.df = (last.period - first.period), suppress.warnings=FALSE) {
+	distr.func <- c(qnorm, qlogis, qt)
+	par1 <- distrib.mean
+	par2 <- distrib.sd
+	if (distrib.type == "normal") i <- 1
+	if (distrib.type == "logistic") {
+		i <- 2
+		par1 <- distrib.log.location
+		par2 <- distrib.log.scale
+	}
+	if (distrib.type == "t") {
+		i <- 3
+		par1 <- distrib.t.df
+		par2 <- 0
+	}
+	a <- distr.func[[i]](survey.down / (survey.up + survey.same + survey.down), par1, par2)
+	b <- distr.func[[i]]((survey.down + survey.same) / (survey.up + survey.same + survey.down), par1, par2)
+	
+	for(i in first.period:last.period) {
+		if (((!is.na(a[i]) && a[i] == 0) | (!is.na(b[i]) && b[i] == 0)) && (!suppress.warnings)) warning(gettextf("\nsurvey.up for observation %i is %f, survey.down is %f. Given the %s distribution, this leads expected inflation to be independent from the share of respondents expecting inflation to rise/fall.\n", i, survey.up[i], survey.down[i], distrib.type))
+	}
 
+	if (limen.type == "carlson.parkin") {
+		limen.abs <- (sum(y.series[(first.period+forecast.horizon):(last.period+forecast.horizon)], na.rm = TRUE) - sum(y.series[first.period:last.period], na.rm = TRUE)) / sum((a + b) / (a - b), na.rm = TRUE)
+		limen.abs <- c(rep(limen.abs, length(survey.up)))
+		
+		i <- (first.period + forecast.horizon):(last.period + forecast.horizon)
+		y.growth <- (y.series[(first.period + forecast.horizon):(last.period + forecast.horizon)] / y.series[first.period:last.period] - rep(1,(last.period - first.period + 1)))	
+		if(!is.na(growth.limit)) {
+			i.growth <- i[abs(y.growth) > abs(growth.limit / 100)]
+			if(length(i.growth)!=0) {
+				med <- median(y.growth, na.rm=TRUE)
+				cat("\nGrowth for observations", i.growth, "exceeds limit of", growth.limit, "percent and has thus been modified to equal median growth of", med, ".\n")
+				y.growth[y.growth > growth.limit] <- med			
+			}
+		}
+		
+		limen.perc <- sum(y.growth, na.rm = TRUE)/sum((a+b)/(a-b),na.rm=TRUE)
+		limen.perc <- c(rep(limen.perc, length(survey.up)))		
+		cat("\nEstimated Carlson-Parkin indifference limen for (assuming expectations on absolute change) is: ", limen.abs[first.period], "\nEstimated Carlson-Parkin indifference limen (assuming expectations on relative change) is: ", limen.perc[first.period], "\n")
+	}
+  
+	
+
+	delta.y.e.mean.abs[i + forecast.horizon] <- limen.abs[i] * (a[i] + b[i]) / (a[i] - b[i])
+	delta.y.e.mean.perc[i + forecast.horizon] <- limen.perc[i] * (a[i] + b[i]) / (a[i] - b[i])	
+	delta.y.e.sd.abs[i + forecast.horizon] <- limen.abs[i] * (-2) / (a[i] - b[i])
+	delta.y.e.sd.perc[i + forecast.horizon] <- limen.perc[i] * (-2) / (a[i] - b[i])	
+	
+	y.e.mean.abs[i + forecast.horizon] <- y.series[i] + delta.y.e.mean.abs[i + forecast.horizon]
+	y.e.mean.perc[i + forecast.horizon] <- y.series[i] * (1 + delta.y.e.mean.perc[i + forecast.horizon])
+	nob <- last.period - first.period + 1
+	mae.abs <- sum(abs(y.e.mean.abs - y.series), na.rm=TRUE) / nob
+	rmse.abs <- sqrt(sum((y.e.mean.abs - y.series)^2,na.rm=TRUE) / nob)
+	mae.perc <- sum(abs(y.e.mean.perc - y.series), na.rm=TRUE) / nob
+	rmse.perc <- sqrt(sum((y.e.mean.perc - y.series)^2,na.rm=TRUE) / nob)
+	cp.results <- list(y.e.mean.abs = c(y.e.mean.abs), 
+										 y.e.mean.perc = c(y.e.mean.perc), 
+										 delta.y.e.mean.abs = c(delta.y.e.mean.abs), 
+										 delta.y.e.mean.perc = c(delta.y.e.mean.perc), 
+										 delta.y.e.sd.abs = c(delta.y.e.sd.abs), 
+										 delta.y.e.sd.perc = c(delta.y.e.sd.perc), 
+										 limen.abs = c(limen.abs), 
+										 limen.perc = c(limen.perc),
+										 nob = c(nob),
+										 mae.abs = c(mae.abs),
+										 rmse.abs = c(rmse.abs),
+										 mae.perc = c(mae.perc),
+										 rmse.perc = c(rmse.perc))
+	
+	return(cp.results)
+}
